@@ -1,84 +1,59 @@
-import { useEffect } from 'react'
-import { Dashboard } from './components/Dashboard'
-import { PhoneChat } from './components/PhoneChat'
-import { ReportPicker } from './components/ReportPicker'
-import { SafetyTrace } from './components/SafetyTrace'
-import { TopNav } from './components/TopNav'
-import { useNow, useSnap, useStore } from './state/AppContext'
+import { useEffect } from 'react';
+import { AboutPage } from './components/AboutPage';
+import { HowPage } from './components/HowPage';
+import { TopNav } from './components/TopNav';
+import { TryPage } from './components/TryPage';
+import { SHELF_REPORTS } from './data/reports';
+import { useActions, useDemoState } from './state/DemoContext';
+import type { Page } from './state/store';
 
-function Toasts() {
-  const { state } = useSnap()
-  const now = useNow()
-  return (
-    <div className="toasts" role="status" aria-live="polite">
-      {state.toasts.filter((t) => now - t.ts < 9000).map((t) => (
-        <div key={t.id} className={`toast ${t.tone}`}>{t.text}</div>
-      ))}
-    </div>
-  )
-}
+const PAGES: Page[] = ['about', 'try', 'how'];
 
-function PresenterTools() {
-  const store = useStore()
-  const { state, ui } = useSnap()
-  if (!ui.tools) return null
-  return (
-    <aside className="tools" aria-label="Presenter tools (hidden)">
-      <strong>Presenter tools</strong> <small>T to hide</small>
-      <button className={state.devInject ? 'on' : ''} onClick={() => store.toggleInject()}>
-        {state.devInject ? 'Unsafe message ARMED (next message)' : 'Inject unsafe message'}
-      </button>
-      <button onClick={() => store.fastForward('risk')}>Fast-forward SLA to “At risk”</button>
-      <button onClick={() => store.fastForward('breach')}>Fast-forward SLA to “Breached”</button>
-      <button onClick={() => store.amendReport()}>Amend sent report (correction)</button>
-      <button onClick={() => store.pickReport('incomplete')}>Load incomplete report (goes to a human)</button>
-    </aside>
-  )
-}
+export function App() {
+  const { ui } = useDemoState();
+  const actions = useActions();
 
-export default function App() {
-  const store = useStore()
-  const { ui } = useSnap()
+  // Keep the address bar in step with the page, so #try and #how can be opened directly.
+  useEffect(() => {
+    const fromHash = () => {
+      const page = window.location.hash.replace('#', '') as Page;
+      if (PAGES.includes(page)) actions.setPage(page);
+    };
+    fromHash();
+    window.addEventListener('hashchange', fromHash);
+    return () => window.removeEventListener('hashchange', fromHash);
+  }, [actions]);
 
   useEffect(() => {
-    const t = setInterval(() => store.tick(), 1000)
-    return () => clearInterval(t)
-  }, [store])
+    if (window.location.hash !== `#${ui.page}`) window.history.replaceState(null, '', `#${ui.page}`);
+    window.scrollTo({ top: 0 });
+  }, [ui.page]);
 
+  // Presenter shortcuts: 1–5 share a document, R resets.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement
-      if (el.tagName === 'INPUT' && (el as HTMLInputElement).type !== 'checkbox') return
-      if (el.tagName === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return
-      switch (e.key.toLowerCase()) {
-        case '1': return void store.pickReport('normal')
-        case '2': return void store.pickReport('abnormal')
-        case '3': return void store.pickReport('critical')
-        case 'd': return store.openTab('dashboard')
-        case 'p': return store.openTab('patient')
-        case 'r': return store.reset()
-        case 't': return store.setUi({ tools: !store.snap.ui.tools })
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [store])
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      const n = Number(e.key);
+      if (n >= 1 && n <= SHELF_REPORTS.length) actions.shareDoc(SHELF_REPORTS[n - 1].id);
+      else if (e.key.toLowerCase() === 'r') actions.reset();
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [actions]);
 
   return (
-    <div className={ui.presentation ? 'app present' : 'app'}>
-      <div className="banner">Demo with fictional patients and data. Not medical advice.</div>
+    <div className="app">
       <TopNav />
-      {ui.tab === 'patient' ? (
-        <div className="stage">
-          <ReportPicker />
-          <PhoneChat />
-          <SafetyTrace />
-        </div>
-      ) : (
-        <Dashboard />
-      )}
-      <Toasts />
-      <PresenterTools />
+      <main className="main">
+        {ui.page === 'about' && <AboutPage />}
+        {ui.page === 'try' && <TryPage />}
+        {ui.page === 'how' && <HowPage />}
+      </main>
+      <footer className="footer">Demo with fictional patients and data. Not medical advice. Concept product, not affiliated with any messaging app.</footer>
     </div>
-  )
+  );
 }

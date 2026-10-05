@@ -1,101 +1,139 @@
-import type { Report } from '../data/reports'
-import type { Route } from './classify'
-import { getTemplate } from './templates'
-import type { Message } from './types'
+// Output checks, run on every outgoing assistant message. No React imports here.
+import type { Report } from '../data/reports';
+import { TEST_CATALOGUE } from '../data/reports';
+import { classify, type Route } from './classify';
+import { DATE_PATTERN, TIME_PATTERN, testName } from './format';
+import { DISCLAIMER, LAB_NAME, REVIEWED_PHRASES, getTemplate, type Message, type Template } from './templates';
 
-export const DISCLAIMER =
-  'Your pathologist-signed report is the official record. This message is an explanation, not medical advice.'
-
-// Hindi disclaimer. NEEDS NATIVE-SPEAKER REVIEW before any real use.
-export const DISCLAIMER_HI =
-  'आपकी पैथोलॉजिस्ट-हस्ताक्षरित रिपोर्ट ही आधिकारिक रिकॉर्ड है। यह संदेश एक स्पष्टीकरण है, चिकित्सा सलाह नहीं।'
-
-export const BANNED = /\b(diagnos\w*|you have|prescribe\w*|dose\w*|tablet\w*|medicine\w*|treatment\w*|cure\w*)\b/i
-
-// Numbers a no-values message may contain: the 30-minute window and the emergency number.
-const NO_VALUES_ALLOWED = [30, 112]
-// Protocol constants that may appear in any message (the 30-minute window and the emergency number).
-const PROTOCOL_CONSTANTS = [30, 112]
+export type CheckId = 'registered' | 'numbers' | 'wording' | 'disclaimer' | 'critical';
+export type CheckStatus = 'pass' | 'fail' | 'na';
 
 export interface CheckResult {
-  id: 'registered' | 'numbers' | 'banned' | 'disclaimer' | 'no-values'
-  label: string
-  pass: boolean
-  skipped?: boolean
-  detail?: string
+  id: CheckId;
+  label: string;
+  status: CheckStatus;
+  detail?: string;
 }
 
-// Pull out the numbers a reader would see as data. Visit IDs, test names such as HbA1c, dates and times are removed first.
-export function extractNumbers(text: string): number[] {
-  const cleaned = text
-    .replace(/\b[A-Za-z][A-Za-z-]*\d[\w-]*/g, ' ') // DEMO-1001, HbA1c
-    .replace(/\b\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}\b/g, ' ') // 5 Jan 2027
-    .replace(/\b\d{1,2}:\d{2}\b/g, ' ') // 11:12
-    .replace(/\b\d{1,2}\s?(am|pm)\b/gi, ' ') // 10 am
-  return (cleaned.match(/\d+(?:\.\d+)?/g) ?? []).map(Number)
+export interface CheckOutcome {
+  ok: boolean;
+  results: CheckResult[];
 }
 
-function reportNumbers(report: Report): Set<number> {
-  const s = new Set<number>()
-  const add = (n: number | null | undefined) => {
-    if (typeof n === 'number' && !Number.isNaN(n)) s.add(n)
+export interface CheckContext {
+  report?: Report;
+  route?: Route;
+}
+
+export const BANNED_PATTERNS: { label: string; re: RegExp }[] = [
+  { label: 'diagnos*', re: /\bdiagnos\w*/i },
+  { label: 'you have', re: /\byou have\b/i },
+  { label: 'prescribe', re: /\bprescri\w*/i },
+  { label: 'dose', re: /\bdos(?:e|es|age|ing)\b/i },
+  { label: 'tablet', re: /\btablets?\b/i },
+  { label: 'medicine', re: /\bmedicines?\b/i },
+  { label: 'treatment', re: /\btreatments?\b/i },
+  { label: 'cure', re: /\bcur(?:e|es|ed|ing)\b/i },
+];
+
+const NUMBER_TOKEN = /(?<![A-Za-z0-9.])\d+(?:\.\d+)?(?![A-Za-z0-9])/g;
+const VISIT_ID = /\bDEMO-\d+\b/g;
+const UNITS = ['mmol/L', 'mg/dL', 'g/dL', 'mIU/L', 'ng/mL', 'U/mL', 'thousand/µL'];
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Remove visit IDs, times, dates and reviewed protocol phrases before looking for numbers. */
+export function stripNonResultNumbers(text: string): string {
+  let out = text.replace(VISIT_ID, ' ').replace(DATE_PATTERN, ' ').replace(TIME_PATTERN, ' ');
+  for (const phrase of REVIEWED_PHRASES) out = out.replace(new RegExp(escapeRegExp(phrase), 'gi'), ' ');
+  return out;
+}
+
+export function numbersIn(text: string): number[] {
+  return (stripNonResultNumbers(text).match(NUMBER_TOKEN) ?? []).map(Number);
+}
+
+/** Numbers that exist in the report data, plus the result counts the engine derives from it. */
+export function allowedNumbers(report?: Report): Set<number> {
+  const allowed = new Set<number>();
+  if (!report) return allowed;
+  allowed.add(report.patient.age);
+  for (const r of report.results) {
+    for (const n of [r.value, r.low, r.high, r.criticalLow, r.criticalHigh]) {
+      if (typeof n === 'number') allowed.add(n);
+    }
   }
-  report.results.forEach((r) => [r.value, r.low, r.high, r.critLow, r.critHigh].forEach(add))
-  for (let i = 0; i <= report.results.length; i++) s.add(i) // counts such as "3 of your 6 results"
-  return s
+  for (const p of report.previous ?? []) allowed.add(p.value).add(p.monthsAgo);
+  const { counts } = classify(report);
+  allowed.add(counts.total).add(counts.inRange).add(counts.outOfRange);
+  return allowed;
 }
 
-export function runChecks(message: Message, report: Report, route: Route): CheckResult[] {
-  const out: CheckResult[] = []
-
-  const tpl = getTemplate(message.templateId)
-  const registered = !!tpl && tpl.version === message.version
-  out.push({
-    id: 'registered',
-    label: 'Registered template ID and version',
-    pass: registered,
-    detail: registered
-      ? `${message.templateId} v${message.version}`
-      : `No registered template for "${message.templateId}" v${message.version}`,
-  })
-
-  const allowed = reportNumbers(report)
-  PROTOCOL_CONSTANTS.forEach((n) => allowed.add(n))
-  const invented = extractNumbers(message.text).filter((n) => !allowed.has(n))
-  out.push({
-    id: 'numbers',
-    label: 'Every number exists in the report data',
-    pass: invented.length === 0,
-    detail: invented.length ? `Not in report: ${invented.join(', ')}` : undefined,
-  })
-
-  const banned = message.text.match(BANNED)
-  out.push({
-    id: 'banned',
-    label: 'No banned wording',
-    pass: !banned,
-    detail: banned ? `Found "${banned[0]}"` : undefined,
-  })
-
-  const needsDisclaimer = message.kind === 'explanation'
-  out.push({
-    id: 'disclaimer',
-    label: 'Disclaimer line present',
-    pass: !needsDisclaimer || (message.text.includes(DISCLAIMER) || message.text.includes(DISCLAIMER_HI)),
-    skipped: !needsDisclaimer,
-  })
-
-  const noValues = route === 'CRITICAL' || route === 'HUMAN'
-  const leaked = noValues ? extractNumbers(message.text).filter((n) => !NO_VALUES_ALLOWED.includes(n)) : []
-  out.push({
-    id: 'no-values',
-    label: 'No result values in a critical or human-routed message',
-    pass: leaked.length === 0,
-    skipped: !noValues,
-    detail: leaked.length ? `Values found: ${leaked.join(', ')}` : undefined,
-  })
-
-  return out
+function checkRegistered(msg: Message): { result: CheckResult; tpl?: Template } {
+  const tpl = getTemplate(msg.templateId, msg.version);
+  if (!tpl) {
+    return {
+      result: { id: 'registered', label: 'Registered template', status: 'fail', detail: `No registered template for "${msg.templateId ?? 'none'}" v${msg.version ?? '?'}` },
+    };
+  }
+  return { tpl, result: { id: 'registered', label: 'Registered template', status: 'pass', detail: `${tpl.id} v${tpl.version}` } };
 }
 
-export const allPass = (checks: CheckResult[]) => checks.every((c) => c.pass)
+export function checkNumbers(text: string, report?: Report): CheckResult {
+  const allowed = allowedNumbers(report);
+  const invented = numbersIn(text).filter((n) => !allowed.has(n));
+  return invented.length
+    ? { id: 'numbers', label: 'Numbers match report', status: 'fail', detail: `Not in report data: ${invented.join(', ')}` }
+    : { id: 'numbers', label: 'Numbers match report', status: 'pass' };
+}
+
+export function checkWording(text: string, tpl?: Template): CheckResult {
+  // The lab's own name is a proper noun, not a clinical statement.
+  const scanned = text.split(LAB_NAME).join(' ');
+  const hits = BANNED_PATTERNS.filter((p) => p.re.test(scanned)).map((p) => p.label);
+  if (!hits.length) return { id: 'wording', label: 'No banned wording', status: 'pass' };
+  if (tpl?.verbatimWordingAllowed && tpl.static && text === tpl.text) {
+    return { id: 'wording', label: 'No banned wording', status: 'pass', detail: 'Registered refusal text, word for word' };
+  }
+  return { id: 'wording', label: 'No banned wording', status: 'fail', detail: `Found: ${hits.join(', ')}` };
+}
+
+export function checkDisclaimer(text: string, tpl?: Template): CheckResult {
+  if (!tpl?.requiresDisclaimer) return { id: 'disclaimer', label: 'Disclaimer present', status: 'na' };
+  return text.includes(DISCLAIMER)
+    ? { id: 'disclaimer', label: 'Disclaimer present', status: 'pass' }
+    : { id: 'disclaimer', label: 'Disclaimer present', status: 'fail', detail: 'Explanation is missing the disclaimer line' };
+}
+
+/** A CRITICAL route emits no result values, test names or units at all. */
+export function checkCritical(text: string, ctx: CheckContext): CheckResult {
+  if (ctx.route !== 'CRITICAL') return { id: 'critical', label: 'No values on critical path', status: 'na' };
+  const problems: string[] = [];
+  const nums = numbersIn(text);
+  if (nums.length) problems.push(`values ${nums.join(', ')}`);
+  const lower = text.toLowerCase();
+  const names = new Set<string>();
+  for (const r of ctx.report?.results ?? []) names.add(testName(r));
+  for (const def of Object.values(TEST_CATALOGUE)) names.add(def.name);
+  for (const name of names) {
+    if (new RegExp(`\\b${name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(lower)) problems.push(name);
+  }
+  for (const unit of UNITS) if (text.includes(unit)) problems.push(unit);
+  return problems.length
+    ? { id: 'critical', label: 'No values on critical path', status: 'fail', detail: `Found: ${problems.join(', ')}` }
+    : { id: 'critical', label: 'No values on critical path', status: 'pass' };
+}
+
+export function runOutputChecks(msg: Message, ctx: CheckContext = {}): CheckOutcome {
+  const { result: registered, tpl } = checkRegistered(msg);
+  const results = [
+    registered,
+    checkNumbers(msg.text, ctx.report),
+    checkWording(msg.text, tpl),
+    checkDisclaimer(msg.text, tpl),
+    checkCritical(msg.text, ctx),
+  ];
+  return { ok: results.every((r) => r.status !== 'fail'), results };
+}

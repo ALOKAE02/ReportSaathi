@@ -1,42 +1,50 @@
-import { useSnap, useStore } from '../state/AppContext'
+import { useActions, useDemoState } from '../state/DemoContext';
+import type { Page } from '../state/store';
+
+const LINKS: { page: Page; label: string }[] = [
+  { page: 'about', label: 'What it is' },
+  { page: 'try', label: 'Try it' },
+  { page: 'how', label: 'How it works' },
+];
+
+export function Logo({ size = 30 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 32 32" width={size} height={size} aria-hidden="true">
+      <rect width="32" height="32" rx="10" fill="#5F8F81" />
+      <path d="M9 11.5c0-1.9 1.6-3.5 3.5-3.5h7c1.9 0 3.5 1.6 3.5 3.5v5c0 1.9-1.6 3.5-3.5 3.5H15l-3.6 3v-3A3.5 3.5 0 0 1 9 16.5z" fill="#F6F8F5" />
+      <path d="M13 13.5l2 2 4-4" fill="none" stroke="#5F8F81" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
 export function TopNav() {
-  const store = useStore()
-  const { state, ui } = useSnap()
-  const unseen = state.cases.filter((c) => !c.seen).length
+  const { ui, data } = useDemoState();
+  const actions = useActions();
+  const waiting = data.handoffs.filter((h) => (h.kind === 'critical' || h.urgent) && h.status !== 'Reached').length;
 
   return (
     <header className="topnav">
-      <div className="brand">
-        <span className="brand-mark">＋</span>
-        <div>
-          <strong>Report Companion</strong>
-          <small>Demo Diagnostics Lab</small>
-        </div>
-      </div>
-      <nav className="tabs" aria-label="Views">
-        <button className={ui.tab === 'patient' ? 'tab active' : 'tab'} onClick={() => store.openTab('patient')}>
-          Patient (WhatsApp)
-        </button>
-        <button className={ui.tab === 'dashboard' ? 'tab active' : 'tab'} onClick={() => store.openTab('dashboard')}>
-          Clinical dashboard
-          {unseen > 0 && <span className="badge" aria-label={`${unseen} new critical case`}>{unseen}</span>}
-        </button>
+      <button className="brand" onClick={() => actions.setPage('about')}>
+        <Logo />
+        <span>ReportSaathi</span>
+      </button>
+      <nav className="steps-nav" aria-label="Pages">
+        {LINKS.map((l, i) => (
+          <button
+            key={l.page}
+            className={`nav-link${ui.page === l.page ? ' active' : ''}`}
+            aria-current={ui.page === l.page ? 'page' : undefined}
+            onClick={() => actions.setPage(l.page)}
+          >
+            <span className="nav-num">{i + 1}</span>
+            {l.label}
+            {l.page === 'how' && waiting > 0 && <span className="nav-dot" aria-label="An urgent handoff is waiting" />}
+          </button>
+        ))}
       </nav>
-      <div className="nav-actions">
-        <button className="ghost" onClick={() => window.open(`${location.pathname}#dashboard`, '_blank')} title="Open the dashboard in a second window (synced live)">
-          ↗ Dashboard window
-        </button>
-        <button className={state.lang === 'hi' ? 'ghost on' : 'ghost'} onClick={() => store.setLang(state.lang === 'hi' ? 'en' : 'hi')} aria-pressed={state.lang === 'hi'} title="Language of the three explanation messages. Hindi needs native-speaker review.">
-          {state.lang === 'hi' ? 'हिन्दी · EN' : 'EN · हिन्दी'}
-        </button>
-        <button className={ui.presentation ? 'ghost on' : 'ghost'} onClick={() => store.setUi({ presentation: !ui.presentation })} aria-pressed={ui.presentation}>
-          Presentation mode
-        </button>
-        <button className="ghost danger" onClick={() => store.reset()}>
-          Reset demo <kbd>R</kbd>
-        </button>
-      </div>
+      <button className="reset" onClick={actions.reset} title="Start the demo again (R)">
+        Start over
+      </button>
     </header>
-  )
+  );
 }

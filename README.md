@@ -1,89 +1,80 @@
-# Report Companion (demo MVP)
+# ReportSaathi · demo MVP
 
-A front-end-only, offline demo. One journey in a messaging-style chat: a patient uploads a report, a **rules engine routes it**, the assistant explains or escalates, and the patient gets a next step. A second screen, the **Clinical Team Dashboard**, shows the human side of an escalation.
+A front-end-only, offline demo of **ReportSaathi**, a chat assistant that briefs patients on their lab report in plain language. It is based on the *ReportSaathi Product Design Document v1.0*: consent first, a five-part brief (headline, what looks fine, what to note, what next, quick replies), suggested follow-up questions, honest limits, and a person whenever it matters.
 
-**Demo with fictional patients and data. Not medical advice.** The app holds only fictional data and must not be given real patient data. No network requests, no analytics, no third-party scripts, no LLM call.
+> **Fictional data only.** Every patient, value and phone number in this app is invented. Do not load real patient data. Nothing here is medical advice. "Demo Diagnostics Lab" and "Dr. Mehta" are fictional. This is a concept product, not affiliated with any messaging app.
 
-## Run
+## Run it
 
 ```bash
 npm install
 npm run dev        # http://localhost:5173
-npm run build
-npm run preview    # serves the built app; works with the network off
-npm test           # Vitest unit tests
+npm run build      # type check + production build into dist/
+npm run preview    # serves dist/ on http://localhost:4173
+npm test           # Vitest unit tests (rules, brief, output checks, guardrails)
 npm run typecheck
 npm run lint
 ```
 
-## Keyboard shortcuts
+The app makes **no network requests** once loaded: no backend, no API keys, no LLM call, no analytics, no web fonts.
 
-| Key | Action |
-| --- | --- |
-| `1` `2` `3` | Pick the normal, out-of-range or critical report |
-| `D` / `P` | Open the dashboard / the patient view |
-| `R` | Reset demo (clears localStorage) |
-| `T` | Show or hide the hidden **Presenter tools** (see below) |
+## The three pages
 
-Also in the top bar: **Presentation mode** (larger type for a projector) and **Dashboard window** (opens the dashboard in a second window, synced live over BroadcastChannel).
+1. **What it is** (`#about`): the idea in simple terms: what it does, what it will always do, what it will never do.
+2. **Try it** (`#try`): a phone with the chat. Share one of the documents already "on the phone", from the list on the left or with the clip inside the chat. After the brief, the assistant offers quick replies and a tray of **suggested questions** to tap.
+3. **How it works** (`#how`): the six steps the assistant went through for your last chat (live), the nine rails and how each is enforced, the handoff queue where a doctor or team member takes over, every message with its checks, and **Try to break it**, which runs the real checks on unsafe draft replies.
 
-## 90-second demo scripts
+## The sample documents
 
-Say once at the start: *"Rules decide the route. The model only explains, after routing. The assistant never diagnoses. Critical values always go to a human."* Keep the **Safety trace** on screen throughout.
+| Key | Document | Patient | What happens |
+| --- | --- | --- | --- |
+| `1` | Annual health check (PDF) | Rahul Verma, 34 | All in range: calm brief, grouped "fine" line, nothing to do |
+| `2` | CBC + HbA1c (PDF) | Ramesh Kumar, 61 | Two values to note, each with range and the change since last time; offers a doctor call |
+| `3` | Kidney panel (PDF) | Meena Iyer, 58 | Critical potassium: no values in chat, a doctor calls within 30 minutes |
+| `4` | Sugar + thyroid (photo) | Sunita Rao, 45 | A value is unreadable: says so, never guesses, asks for a clearer photo |
+| `5` | Health insurance policy (PDF) | Priya Nair, 29 | Not a lab report: says so and explains what it can do |
 
-### 🟢 Normal (key `1`)
-1. (0:00) Tap the green card. An attachment bubble appears. Point at the trace: report received, rules check, route NORMAL.
-2. (0:15) Tap **Enter code** (simulated verification, because values are about to be shown).
-3. (0:25) The assistant explains all six results in plain words, ending with the disclaimer line. In the trace, show the five output checks and the template ID `NORM-01 v1.0` with "Medical director sign-off: demo, pending".
-4. (0:50) Tap **Remind me for a yearly check-up**. A "Reminder set" chip with a date appears. Mention the interval is set by the lab's medical team.
-5. (1:10) Point out 👎 Not helpful and 📞 Call me on every explanation.
+`R` (or **Start over**) resets everything and clears localStorage. Shortcuts are ignored while typing.
 
-### 🟡 Out of range (key `2`)
-1. (0:00) Tap the amber card, then **Enter code**.
-2. (0:20) Two messages: the count of results inside and outside the ranges, then the three flagged results with printed ranges and a one-line meaning each. Read the "only your doctor can say" line.
-3. (0:45) Tap **Remind me to repeat the test**. The date and tests appear.
-4. (1:00) Tap **Talk to a health advisor**. Open the dashboard (`D`) and show **Advisor callbacks**.
-5. (1:15) Back in the chat (`P`) type `Do I have diabetes?`. The assistant refuses and hands off to an advisor. Optional: type `I have chest pain` to show the urgent reply and the urgent callback.
+## Demo script (about 4 minutes)
 
-### 🔴 Critical (key `3`)
-1. (0:00) Tap the red card. The trace turns red at the rules check: Potassium beyond its critical limit.
-2. (0:20) The chat shows **no values and no explanation**. Only: a doctor will call within 30 minutes, call 112 if very unwell, then a red status bubble.
-3. (0:35) The red badge and toast appear on the **Clinical dashboard** tab. Tap **Open clinical dashboard (Demo)** or press `D`.
-4. (0:45) Walk the card: 30-minute countdown, value against critical limit, previous result, the AI-prepared summary (a draft for the clinician, not sent to the patient).
-5. (1:00) **Call patient**, tick the checklist, **Mark as reached**. Press `P`: the patient chat shows "Our clinical team has spoken with you."
-
-### Clinical dashboard extras (30 seconds)
-- **Audit** tab: every message with template ID and version, route, check results and the patient action that followed. Names and phone numbers are never written to it. **Export JSON** downloads it.
-- **Pause AI explanations** (whole service or per template). Turn it on, press `P`, pick the amber report: the chat sends the handoff message and the trace says "Paused by clinical team". The critical path still escalates.
-- **No answer** button: logs the attempt and schedules a retry (10 seconds in the demo). After three attempts the case goes to a supervisor.
-
-## Hidden presenter tools (press `T`)
-
-- **Inject unsafe message**: the next outgoing message gets an invented number, banned wording and a medicine instruction. The output checks turn red and the safe template `HANDOFF-01` is sent instead.
-- **Fast-forward SLA** to "At risk" (under 10 minutes, amber) and to "Breached" (red, toast, "Escalated to supervisor" audit line).
-- **Amend sent report**: sends a correction message, marks the earlier explanation "Superseded" and writes an audit line.
-- **Load incomplete report**: an unknown test with no printed range. The whole report goes to a human and nothing is explained.
+1. **What it is.** *"Patients get a PDF of numbers and no next step. ReportSaathi closes that gap in 30 seconds."* Point at "It will never".
+2. **Try it → press `2`.** The PDF appears in the chat. Consent comes first: *"Nothing is read before the patient says OK."* Tap **Yes, continue**.
+3. The brief: headline, ✓ what looks fine, ● each flag with its value, range and "lower than last time", one next step. *"Fine first, flags second, never a diagnosis."*
+4. Tap the suggestions: **What is HbA1c?**, **How has it changed?** Then type *"Is 7.4 dangerous? Should I change my medicine?"*: the boundary, then straight to a helpful action. Tap **Book a doctor call → Book 5:30 pm today**.
+5. Press `3`, say yes. *"Critical: the assistant says nothing clinical. A doctor calls within 30 minutes."* Tap **See the doctor handoff**.
+6. **How it works.** Show the six steps for this chat and the rails. In the handoff card, tap **Call patient → Mark as reached**; back on Try it, the chat shows the doctor's closing note.
+7. Press `4` for the blurry photo: *"Honest about limits."* Tap **Send a clearer photo**.
+8. Finish on **Try to break it**: pick "Give a diagnosis" or "Leak a critical value" and show it blocked, with the safe message the patient would get instead.
 
 ## What is real and what is scripted
 
-**Real (runs as it would in production):**
-- Routing: pure functions in `src/engine/classify.ts` (critical > unclear/sensitive > abnormal > normal; boundary values are in range). Unit-tested.
-- Output checks in `src/engine/checks.ts`: registered template, every number exists in the report, no banned wording, disclaimer present, no values in a critical or human-routed message. Any failure swaps in the safe handoff template. Unit-tested.
-- The template registry, the audit log, the SLA clock, the kill switch and the callback lists.
-- State is persisted to localStorage; two windows stay in sync.
+**Real (deterministic code you can read and test):**
 
-**Scripted (stand-ins for the demo):**
-- All patients, reports and results are fictional (`src/data/reports.ts`). There is no file upload or OCR: tapping a card plays the upload.
-- The explanations are fixed templates behind `explain(report, route) => Message[]` in `src/engine/explain.ts`. A real LLM can replace the body later, under the contract in that file's comment: report values are data, never instructions, and LLM output must pass the same checks and carry a registered template ID.
-- Verification code, phone call, reminders, signed-report download and the "medical director sign-off" (shown as *demo, pending*) are simulated.
-- The free-text guardrails are keyword rules, not understanding.
-- Dashboard history ("Critical today", the two closed cases) is seeded demo data.
-- The **EN / हिन्दी** toggle in the top bar switches the three explanation messages (normal, out-of-range summary and details) to Hindi. The Hindi strings in `src/engine/explain.ts` and `checks.ts` are marked as **needing native-speaker review** and medical sign-off. Buttons, test names and all other messages stay in English.
+- Routing rules (`src/engine/classify.ts`): unsupported document → critical → sensitive test → unreadable value → unknown test or missing range → something to note → all fine. A value exactly on a boundary is in range.
+- The brief and every answer (`src/engine/explain.ts`) are built only from registered templates (`src/engine/templates.ts`) and the approved explanation library (`src/data/reports.ts`).
+- Output checks (`src/engine/checks.ts`) on every outgoing message: registered template and version, every number exists in the report, no banned wording (diagnosis, "you have", medicine, tablet, dose, treatment, cure, prescribe), disclaimer on explanations, and no values, test names or units on the critical path. A failing message is never sent; the safe handoff message goes instead.
+- Free-text guardrails (`src/engine/guardrails.ts`): emergency wording first, then STOP, delete, consent, the critical path, medicine or diagnosis questions, "is this serious", a person, booking, trend, questions about a test on the report, and a friendly redirect.
+- Suggested questions and quick replies (`src/engine/actions.ts`): at most 3 quick replies per message; suggestions come from the route and the flagged tests, jargon first, and drop off once used.
 
-## One deliberate wording change
+**Scripted or simulated:**
 
-The brief's refusal template said "I cannot diagnose conditions or suggest medicines", which contains two banned words the output checks reject. It is reworded ("I am not able to say what is behind your results, or suggest anything to take...") so every message passes the same checks with no exemption.
+- No LLM is called. `explain()` fills scripted templates; its code comment states the contract a future model must meet.
+- Sharing a document, the doctor booking, reminders, the phone call and the 30-day deletion are simulations. The "clearer photo" is a pre-made second file.
+- English only in this demo. Hindi and Hinglish, voice notes and photo OCR from the design document are not built.
 
 ## Layout
 
-`src/data/reports.ts` data · `src/engine/` classify, checks, templates, explain (no React) · `src/state/` store with localStorage and BroadcastChannel · `src/components/` PhoneChat, ReportPicker, SafetyTrace, Dashboard, CaseCard, TopNav.
+```
+src/data/reports.ts        sample documents, approved explanation library, sensitive categories
+src/engine/classify.ts     routing rules (pure, no React)
+src/engine/explain.ts      the brief, follow-up answers, clinician summary
+src/engine/templates.ts    template registry, disclaimer, reviewed phrases
+src/engine/checks.ts       output checks
+src/engine/guardrails.ts   free-text guardrails
+src/engine/actions.ts      quick replies and suggested questions
+src/engine/engine.test.ts  Vitest unit tests
+src/state/                 store (React context + localStorage + BroadcastChannel) and flows
+src/components/            TopNav, AboutPage, TryPage, Phone, HowPage, HandoffCard
+docs/screenshots/          screenshots of each page and flow
+```
